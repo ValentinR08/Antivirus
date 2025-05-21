@@ -2,23 +2,22 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QPushButton, QLabel, QVBoxLayout, QFileDialog,
-    QTextEdit, QProgressBar, QHBoxLayout
+    QTextEdit, QProgressBar
 )
-from PyQt5.QtGui import QFont, QColor, QPalette
+from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from scanner.scanEngine import ScanEngine
 
-import time
 import os
 
 
-# Hilo para no congelar la interfaz durante el escaneo
 class ScanThread(QThread):
-    progress = pyqtSignal(int, str)
+    progress = pyqtSignal(int, str, str)  # % progreso, archivo, resultado
 
-    def __init__(self, folder):
+    def __init__(self, folder, engine):
         super().__init__()
         self.folder = folder
+        self.engine = engine
         self._is_running = True
 
     def run(self):
@@ -30,9 +29,9 @@ class ScanThread(QThread):
                 if not self._is_running:
                     return
                 file_path = os.path.join(root, file)
-                time.sleep(0.05)  # Simulación de escaneo
+                result = self.engine.scan_file(file_path)
                 scanned += 1
-                self.progress.emit(int((scanned / total_files) * 100), file_path)
+                self.progress.emit(int((scanned / total_files) * 100), file_path, result)
 
     def stop(self):
         self._is_running = False
@@ -71,6 +70,7 @@ class MainWindow(QWidget):
         self.layout.addWidget(self.output)
 
         self.setLayout(self.layout)
+        self.threat_count = 0
 
     def start_scan(self):
         folder = QFileDialog.getExistingDirectory(self, "Selecciona carpeta")
@@ -78,15 +78,27 @@ class MainWindow(QWidget):
             self.output.clear()
             self.progress_bar.setValue(0)
             self.status_label.setText("Estado: Escaneando...")
+            self.threat_count = 0
 
-            self.thread = ScanThread(folder)
+            self.thread = ScanThread(folder, self.engine)
             self.thread.progress.connect(self.update_progress)
+            self.thread.finished.connect(self.scan_finished)
             self.thread.start()
 
-    def update_progress(self, percent, file_path):
+    def update_progress(self, percent, file_path, result):
         self.progress_bar.setValue(percent)
-        self.status_label.setText(f"Estado: Escaneando {file_path}")
-        self.output.append(f"✔ Escaneado: {file_path}")
+        self.status_label.setText(f"Escaneando: {file_path}")
 
-        if percent >= 100:
-            self.status_label.setText("✅ Escaneo completado.")
+        if "⚠️ AMENAZA DETECTADA" in result:
+            self.threat_count += 1
+            self.output.append(f"<span style='color:#ff5c5c;'>{result}</span>")
+        elif "Limpio" in result:
+            self.output.append(f"<span style='color:#7fd37f;'>{result}</span>")
+        else:
+            self.output.append(result)
+
+    def scan_finished(self):
+        if self.threat_count > 0:
+            self.status_label.setText(f"❌ Escaneo completado: {self.threat_count} amenaza(s) detectadas.")
+        else:
+            self.status_label.setText("✅ Escaneo completado: sin amenazas.")
